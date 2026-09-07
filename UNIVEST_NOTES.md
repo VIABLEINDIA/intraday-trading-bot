@@ -232,6 +232,48 @@ than the friction of trading. The correct conclusion is that momentum is the
 right *direction* but a 3-minute opening-range breakout on Nifty 50 names does
 not clear costs.
 
+## The deciding test: does the signal predict anything?
+
+Every test above asked how much money the strategy extracts. This one asks
+whether there is anything to extract. Same entries (the engine's own gap
+classification, ranking and break-and-close functions are reused, so the
+entries are identical), then forward returns at seven horizons with **no stop,
+no target and no costs**. Returns are signed by direction, and the
+market-adjusted column subtracts the Nifty's move over the identical window so
+that market beta is not mistaken for signal.
+
+Momentum, 268 entries over 248 sessions:
+
+| horizon | mean | win% | t | mkt-adj mean | mkt-adj t |
+|---|---|---|---|---|---|
+| +30 min | +0.002% | 50.6% | 0.05 | +0.000% | 0.00 |
+| +60 min | +0.072% | 54.0% | 1.27 | +0.051% | 0.92 |
+| +120 min | +0.085% | 53.6% | 1.35 | +0.083% | 1.36 |
+| session close | +0.185% | 56.7% | 2.30 | +0.142% | **1.89** |
+| +1 day | +0.191% | 51.7% | 1.36 | +0.183% | 1.54 |
+| +3 days | −0.099% | 46.6% | −0.47 | +0.005% | 0.03 |
+| +5 days | +0.334% | 50.2% | 1.36 | +0.373% | 1.73 |
+
+Fade, as a control, is flat everywhere (|t| ≤ 1.37, means within ±0.1% at every
+horizon except a −0.294% market-adjusted drift at 5 days).
+
+**No horizon clears significance once market beta is removed.** The best is the
+session close at t = 1.89, below the conventional |t| > 2 bar — and that is the
+best of seven horizons tested, so even that overstates it: testing seven
+horizons, one looking mildly good is what noise produces.
+
+Two conclusions follow:
+
+- **Holding longer does not help.** +3 days is negative and +5 days is
+  insignificant. The idea that a longer horizon would amortise costs is dead;
+  there is no larger move waiting to be captured.
+- **The intraday horizon is the only one with any signal at all**, worth about
+  +0.14% market-adjusted before costs — against ~0.06–0.10% of charges plus
+  slippage, whose break-even we measured at 2.6 bp per leg.
+
+The signal is, for practical purposes, noise. No parameter set, instrument
+change or cost optimisation recovers an edge that is not there.
+
 ## What to do next
 
 Do not build execution or alerting on top of this strategy — that is machinery
