@@ -19,6 +19,7 @@ Usage
 """
 
 import argparse
+import bisect
 import json
 import pickle
 import sys
@@ -58,18 +59,32 @@ def session_dates(candles: List[Dict]) -> List[str]:
     return sorted({c["timestamp"][:10] for c in candles})
 
 
-def slice_session(candles: List[Dict], date_str: str) -> List[Dict]:
+def index_by_session(candles: List[Dict]) -> Dict[str, List[Dict]]:
+    """Group a symbol's candles by session date, once.
+
+    Slicing by scanning the full list per date is O(dates x bars) per symbol,
+    which for a year of 3-minute bars across 50 symbols is hundreds of millions
+    of comparisons -- and a parameter sweep repeats it per cell. Indexing once
+    turns each slice into a dict lookup.
+    """
+    grouped: Dict[str, List[Dict]] = {}
+    for c in candles:
+        grouped.setdefault(c["timestamp"][:10], []).append(c)
+    return grouped
+
+
+def slice_session(indexed: Dict[str, List[Dict]], ordered_dates: List[str],
+                  date_str: str) -> List[Dict]:
     """Return the target session plus the one before it.
 
     The engine infers the test date from the newest candle, so the slice must
     end on ``date_str``. The preceding session supplies the previous close used
     for gap classification.
     """
-    dates = [d for d in session_dates(candles) if d <= date_str]
-    if len(dates) < 2 or dates[-1] != date_str:
+    pos = bisect.bisect_left(ordered_dates, date_str)
+    if pos == 0 or pos >= len(ordered_dates) or ordered_dates[pos] != date_str:
         return []
-    keep = {dates[-2], dates[-1]}
-    return [c for c in candles if c["timestamp"][:10] in keep]
+    return indexed[ordered_dates[pos - 1]] + indexed[date_str]
 
 
 def fetch_all(feed: MarketDataFeed, stocks: List[Dict], lookback_days: int) -> Dict[str, List[Dict]]:
@@ -242,8 +257,15 @@ def main() -> int:
         return 1
     print(f"  Nifty: {len(nifty)} bars over {len(session_dates(nifty))} sessions")
 
+    # Index every symbol by session date once, so replaying a date -- and
+    # re-replaying it for each sweep cell -- is a lookup rather than a scan.
+    nifty_idx = index_by_session(nifty)
+    nifty_dates = sorted(nifty_idx)
+    stock_idx = {sym: index_by_session(c) for sym, c in all_candles.items()}
+    stock_dates = {sym: sorted(idx) for sym, idx in stock_idx.items()}
+
     # Only sessions where the index itself has data are testable.
-    available = session_dates(nifty)
+    available = nifty_dates
     if args.date:
         if args.date not in available:
             print(f"ERROR: {args.date} not available. Have: {available[0]}..{available[-1]}",
@@ -270,13 +292,13 @@ def main() -> int:
         n_sessions = 0
 
         for date_str in targets:
-            nifty_slice = slice_session(nifty, date_str)
+            nifty_slice = slice_session(nifty_idx, nifty_dates, date_str)
             if not nifty_slice:
                 continue
             stock_slices = {
                 sym: sliced
-                for sym, candles in all_candles.items()
-                if (sliced := slice_session(candles, date_str))
+                for sym, idx in stock_idx.items()
+                if (sliced := slice_session(idx, stock_dates[sym], date_str))
             }
             if not stock_slices:
                 continue
@@ -365,9 +387,12 @@ def main() -> int:
             print(f"  Profitable days : {green}/{len(daily_net)}")
 
     print()
-    print("  CAVEATS: fills assume the exact candle close with zero slippage and")
-    print("  no impact cost; Yahoo bars are unadjusted and may differ from")
-    print(f"  exchange data. {sessions} sessions is far too small to infer an edge.")
+    print("  CAVEATS: fills assume the exact candle close with zero slippage and no")
+    print(f"  impact cost, so real results are worse. Data source: {feed.name}.")
+    if feed.name != "dhan":
+        print("  Yahoo bars are unadjusted and may differ from exchange data.")
+    if sessions < 100:
+        print(f"  {sessions} sessions is too small a sample to infer an edge.")
 
     return 0
 

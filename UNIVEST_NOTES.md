@@ -95,41 +95,72 @@ stock and on a ₹2,329 stock score identically. The runner applies a fixed
 notional per trade (`--capital`, `--alloc-pct`) and the repo's intraday cost
 model (`--broker`) to produce comparable rupee figures.
 
-## Result on 20 sessions (Aug–Sep 2026, Nifty 50, ₹1L, 25%/trade)
+## Result: one year, 248 sessions, Dhan data
+
+Nifty 50, ₹1L capital, 25% notional per trade, Zerodha intraday fees.
 
 | | |
 |---|---|
-| Trades | 28 |
-| Win rate | 50.0% |
-| Gross P&L | ₹813.85 |
-| Costs | ₹709.70 (87% of gross) |
-| **Net P&L** | **₹104.15 (+0.10% on capital)** |
-| Profit factor | 1.05 |
+| Sessions | 248 |
+| Trades | 279 |
+| Win rate | 44.1% |
+| **Gross P&L** | **−₹1,076.92** (negative *before* costs) |
+| Costs | ₹7,141.60 |
+| **Net P&L** | **−₹8,218.52 (−8.22% on capital)** |
+| Profit factor | 0.72 |
+| Profitable days | 75/248 (30%) |
 
-**Costs eat essentially the whole edge.** Round-trip charges are ~₹25 per trade
-on a ₹25,000 notional — about **0.10%** — while the strategy's average gross
-edge is roughly 0.03–0.17% per trade depending on parameters. It has to clear
-0.10% before slippage just to break even, and these fills assume the exact
-candle close with zero slippage and zero impact cost. Real fills will be worse.
+**The strategy has no edge.** It loses money before a single rupee of
+brokerage is paid, and costs then triple the loss. This is not a
+cost-optimisation problem — there is nothing underneath the costs to rescue.
 
-The sweep shows the same thing from another angle: costs stay near ₹710 in every
-one of the 18 parameter cells while gross swings from −₹92 to +₹1,166. The
-result is decided by the cost line, not the parameters.
+An earlier 20-session Yahoo sample showed +₹104 net and looked roughly
+breakeven. That was noise: 28 trades is ~4% of a year, and one trade moved it
+several percent. The lesson is that the short sample was not merely imprecise,
+it pointed the wrong way.
 
-Two structural notes from the sweep:
+### Every parameter combination loses
 
-- `stop_loss_percent` is nearly a no-op. It applies only when the reference
-  candle range exceeds `large_candle_percent`; normally the stop is the
-  reference candle low/high. SL 1.0% and 1.5% produced identical results.
-- A 1% target against a ~1% stop at a 50% win rate is roughly zero expectancy
-  **by construction**. Costs then push it negative.
+The full target × stop grid over the same 248 sessions:
 
-## Caveats on that result
+| target% | 0.5 SL | 1.0 SL | 1.5 SL |
+|---|---|---|---|
+| 0.50 | −8,264 | −5,643 | −5,222 |
+| 0.75 | −10,765 | −7,933 | −8,448 |
+| 1.00 | −10,791 | **−8,219** | −9,414 |
+| 1.50 | −9,467 | −5,586 | −6,247 |
+| 2.00 | −7,490 | −5,365 | −6,822 |
+| 3.00 | −6,956 | **−3,985** | −5,632 |
 
-28 trades over 20 sessions is far too small to conclude anything about edge —
-one trade is ~4% of the sample. What it *does* establish robustly is the cost
-floor, which is arithmetic rather than a sample statistic. Do not tune
-parameters on this window; the best sweep cell is curve-fitting.
+Profit factor ranges 0.57–0.87 and never reaches 1.0. Gross P&L is negative in
+10 of 18 cells; the best gross (+₹3,158) still fails to cover ₹7,143 of costs.
+Costs are near-constant at ~₹7,142 because trade count does not change — the
+grid only moves exits, not entries.
+
+The least-bad cell (3% target) is still −4% on capital for a year of daily
+screen time. Do not read it as a configuration to adopt.
+
+### Why it fails
+
+- **Entry frequency is fixed.** 279 trades regardless of parameters, so costs
+  are a fixed ~₹7,142 toll paid before any edge is earned.
+- **The gap-fade premise does not hold.** Shorting the strongest gap-up stocks
+  and buying the weakest gap-down ones is a mean-reversion bet, and a 3-minute
+  breakout confirmation does not select the reverting subset. Win rate falls as
+  the target widens (49.5% → 31.5%), which is what a directionless entry looks
+  like.
+- **`stop_loss_percent` barely matters.** It applies only when the reference
+  candle range exceeds `large_candle_percent`; otherwise the stop is the
+  reference candle low/high.
+
+## Caveats on the caveats
+
+248 sessions and 279 trades is a real sample, not a toy one, and the result is
+consistent across all 18 parameter sets — so "no edge" is a robust conclusion,
+not a sampling artefact. Two things still flatter these numbers: fills assume
+the exact candle close with zero slippage and no impact cost, and there is no
+survivorship correction for the Nifty 50 constituent list, which is today's
+membership applied to the past year. Both biases push the true result *lower*.
 
 ## If you want live signals on Univest
 
