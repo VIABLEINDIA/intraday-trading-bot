@@ -209,9 +209,17 @@ scripts/
 └── evaluate_signals.py    # Score recorded calls
 ```
 
-Angel One is an **optional** dependency. Its client imports the SmartApi SDK at
-module level, so it is imported lazily — a missing SDK is reported only when
-`data_source` is `angel`.
+Angel One is an **optional** dependency, in the requirements as well as the
+code. `requirements.txt` covers backtesting, research, paper trading, the
+dashboard and both credential-free feeds; the SmartApi SDK and its helpers live
+in `requirements-angel.txt` and are only needed for live trading:
+
+```bash
+pip install -r requirements.txt -r requirements-angel.txt
+```
+
+The client imports SmartApi at module level, so it is imported lazily and a
+missing SDK is reported only when `data_source` is `angel`.
 
 ---
 

@@ -1,0 +1,13 @@
+# ===================================
+# ANGEL ONE (LIVE TRADING) EXTRAS
+# ===================================
+# Only needed for data_source: "angel" in config/settings.json, which is the
+# only mode that can place real orders. The bot imports these lazily, so
+# backtesting, research and paper trading all work without them.
+#
+#     pip install -r requirements.txt -r requirements-angel.txt
+
+smartapi-python>=1.3.6
+pyotp>=2.9.0                  # TOTP for Angel One 2FA
+websocket-client>=1.6.0       # Angel One tick stream
+logzero>=1.7.0                # SmartApi dependency
