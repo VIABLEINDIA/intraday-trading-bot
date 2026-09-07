@@ -3,6 +3,17 @@ import sys
 import signal
 import atexit
 from pathlib import Path
+
+# The codebase logs and prints emoji throughout, but a Windows console defaults
+# to cp1252 and raises UnicodeEncodeError on them. That is not cosmetic: an
+# uncaught encode error aborts whatever was mid-print, which silently killed the
+# startup Nifty 50 refresh. Force UTF-8 on the streams before anything writes.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError):  # already UTF-8, or not a real console
+        pass
+
 from loguru import logger
 
 # Configuration

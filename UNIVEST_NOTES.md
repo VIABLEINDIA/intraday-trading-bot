@@ -290,13 +290,55 @@ sound and reusable; the strategy is what failed. Reasonable next steps:
    Dhan token because the backtest came before the execution layer. Keep that
    order.
 
-## If you want live signals on Univest
+## Running the live loop without a broker account
 
-The data feed makes a signal-only run possible, but the bot's live loop still
-constructs an Angel One websocket for tick data (`src/core/bot.py`). Running
-live on the Yahoo feed needs that replaced with a polling loop, plus a delivery
-channel (console/Telegram) emitting symbol, side, entry, stop, target and
-quantity for manual 1-tap entry in Univest.
+The bot can now run its full live loop on any `MarketDataFeed`. Set the data
+source in `config/settings.json`:
+
+```json
+{
+  "trading_mode": "paper",
+  "data_source": "dhan",      // "angel" | "dhan" | "yfinance"
+  "data_poll_seconds": 3
+}
+```
+
+Then `python run.py`. With `data_source` set to anything but `angel`, no Angel
+One account, API key or SmartApi install is required.
+
+Three pieces make that work:
+
+- **`src/datafeed/polling.py`** — Angel One pushes ticks over a websocket;
+  nothing else does. `PollingPriceFeed` polls a feed on a timer and emits the
+  same `(symbol, price_data)` callbacks, exposing the identical
+  `subscribe`/`connect`/`on_price_update` contract, so the live loop cannot
+  tell the difference. Day open/high/low accumulate from observed prices, and
+  Dhan's batched LTP endpoint means one request per poll regardless of how many
+  symbols are tracked.
+- **`src/datafeed/broker_adapter.py`** — `Bot` was written against
+  `AngelOneClient`, which mixes market data with account and order calls. The
+  adapter forwards data calls to the feed and answers account calls with paper
+  values. `place_order` raises rather than returning a fake success: pretending
+  an order was placed would be the worst possible failure mode.
+- **Optional Angel imports.** `bot.py` imported `AngelOneClient` at module
+  level, which imports the SmartApi SDK, so a broker account was a hard
+  requirement just to start the process. The import is now optional and a
+  missing SDK is reported only if `data_source` is `angel`.
+
+Live trading still requires `data_source: "angel"`. Selecting a data-only
+source with `trading_mode: "live"` is refused at startup rather than failing
+later at the first order.
+
+### Univest workflow
+
+Univest has no API, so the bot generates signals and you place the order. The
+polling interval means ticks arrive every few seconds rather than on every
+trade — fine for a strategy that decides on 3-minute candle closes, unsuitable
+for anything latency-sensitive.
+
+What is still missing for that workflow is a delivery channel: something that
+pushes symbol, side, entry, stop, target and quantity to a phone (Telegram, say)
+at the moment of signal. Worth building only once a strategy is worth trading.
 
 Note also that Yahoo quotes are **not guaranteed real-time**. For a 3-minute
 strategy that squares off intraday, a delayed feed is acceptable for research

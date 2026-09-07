@@ -417,6 +417,49 @@ class DhanFeed(MarketDataFeed):
             "close": ltp, "previousClose": prev_close, "volume": latest["volume"],
         }
 
+    def get_ltp_batch(self, instruments: List[Dict]) -> Dict[str, float]:
+        """Last traded price for many instruments in one request.
+
+        The market feed endpoint accepts a whole segment's worth of security
+        ids at once, so polling N symbols costs one call rather than N. Returns
+        {token: price} keyed by the caller's token, skipping anything the
+        response does not carry.
+        """
+        if not self._ready and not self.login():
+            return {}
+
+        by_segment: Dict[str, List[int]] = {}
+        for item in instruments:
+            token = str(item.get("token", "")).strip()
+            if not token:
+                continue
+            sec_id, segment, _ = self._resolve(item.get("symbol", ""), token)
+            by_segment.setdefault(segment, []).append(int(sec_id))
+
+        if not by_segment:
+            return {}
+
+        try:
+            payload = self._post(_LTP_URL, by_segment)
+        except DhanAuthError as exc:
+            logger.error(f"Batch LTP: {exc}")
+            self._ready = False
+            return {}
+
+        prices: Dict[str, float] = {}
+        data = payload.get("data", {})
+        for segment, quotes in data.items():
+            for sec_id, quote in (quotes or {}).items():
+                price = (quote or {}).get("last_price")
+                if price:
+                    prices[str(sec_id)] = float(price)
+
+        # Index tokens differ from Dhan security ids; map them back.
+        for angel_token, (sec_id, _seg, _instr) in _INDEX_MAP.items():
+            if sec_id in prices:
+                prices.setdefault(angel_token, prices[sec_id])
+        return prices
+
     def get_ltp(self, symbol: str, token: str, exchange: str = "NSE") -> Optional[float]:
         """Real-time last traded price from the market feed endpoint."""
         if not self._ready and not self.login():

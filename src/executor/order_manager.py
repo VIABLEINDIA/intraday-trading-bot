@@ -1,10 +1,9 @@
-"""Order Manager - Handles order execution and tracking."""
+﻿"""Order Manager - Handles order execution and tracking."""
 
 from typing import Dict, List, Optional
 
 from loguru import logger
 
-from src.broker.angel_client import AngelOneClient
 from src.broker.paper_trader import PaperTrader
 from src.core.config_manager import get_config
 from src.utils.timezone import now_ist
@@ -13,7 +12,7 @@ from src.utils.timezone import now_ist
 class OrderManager:
     """Routes orders to paper/live backends."""
 
-    def __init__(self, broker: AngelOneClient, paper_trader: PaperTrader):
+    def __init__(self, broker, paper_trader: PaperTrader):
         self.config = get_config()
         self.broker = broker
         self.paper_trader = paper_trader

@@ -1,5 +1,7 @@
 {
   "trading_mode": "paper",
+  "data_source": "angel",
+  "data_poll_seconds": 3,
   "capital": {
     "use_percentage": true,
     "trading_percentage": 50,

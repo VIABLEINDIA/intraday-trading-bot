@@ -12,9 +12,21 @@ from src.utils.timezone import now_ist, now_ist_time
 
 from src.core.config_manager import get_config, ConfigManager
 from src.core.scheduler import TradingScheduler
-from src.broker.angel_client import AngelOneClient
 from src.broker.paper_trader import PaperTrader
-from src.broker.websocket_client import AngelWebSocket
+
+# Angel One is optional. Its client imports the SmartApi SDK at module level,
+# so importing it unconditionally would make a broker account a hard
+# requirement for running the bot at all -- including the paper-trading and
+# research paths that deliberately use another data source.
+try:
+    from src.broker.angel_client import AngelOneClient
+    from src.broker.websocket_client import AngelWebSocket
+    ANGEL_AVAILABLE = True
+except ImportError as _angel_import_error:  # pragma: no cover - env dependent
+    AngelOneClient = None
+    AngelWebSocket = None
+    ANGEL_AVAILABLE = False
+    _ANGEL_IMPORT_ERROR = _angel_import_error
 from src.analysis.pre_market import PreMarketAnalyzer
 from src.analysis.stock_scorer import StockScorer
 from src.strategy.base_strategy import BaseStrategy
@@ -37,10 +49,13 @@ class TradingBot:
         self.scheduler = TradingScheduler()
         
         # Broker components
-        self.angel_client: Optional[AngelOneClient] = None
+        self.angel_client: Optional[Any] = None
         self.paper_trader: Optional[PaperTrader] = None
-        self.websocket: Optional[AngelWebSocket] = None
+        self.websocket: Optional[Any] = None
         self.broker_connected: bool = False
+        # Which market data source backs this run; set during initialize().
+        # "angel" is the original SmartAPI path, anything else is data-only.
+        self.data_source: str = "angel"
         
         # Analysis components
         self.pre_market_analyzer: Optional[PreMarketAnalyzer] = None
@@ -187,10 +202,40 @@ class TradingBot:
         self._log_activity("SYSTEM", "Initializing bot components...")
         
         try:
-            # 1. Initialize Angel One client
-            logger.info("ðŸ“¡ Connecting to Angel One...")
-            self.angel_client = AngelOneClient()
-            
+            # 1. Initialize the market data source.
+            # "angel" keeps the original SmartAPI client (data + execution).
+            # Any other source is data-only: it drives the strategy in paper
+            # mode without a broker account, and cannot place orders.
+            self.data_source = str(self.config.get("data_source", "angel")).lower()
+
+            if self.data_source == "angel":
+                if not ANGEL_AVAILABLE:
+                    logger.error(
+                        f"data_source is 'angel' but the SmartApi SDK is not installed "
+                        f"({_ANGEL_IMPORT_ERROR}). Install smartapi-python, or set "
+                        f"data_source to 'dhan' or 'yfinance' for a data-only run."
+                    )
+                    self._log_activity("ERROR", "Angel One SDK not installed")
+                    return False
+                logger.info("Connecting to Angel One...")
+                self.angel_client = AngelOneClient()
+            else:
+                from src.datafeed import get_feed
+                from src.datafeed.broker_adapter import BrokerlessAdapter
+
+                paper_balance = self.config.get("capital.default_paper_balance", 100000.0)
+                feed = get_feed(self.data_source)
+                self.angel_client = BrokerlessAdapter(feed, paper_balance=paper_balance)
+                logger.info(f"Market data source: {self.angel_client.name} (data only)")
+
+                if not self.config.is_paper_mode:
+                    logger.error(
+                        f"data_source '{self.data_source}' cannot place orders. "
+                        "Set trading_mode to 'paper', or use 'angel' for live trading."
+                    )
+                    self._log_activity("ERROR", "Live trading needs the Angel One data source")
+                    return False
+
             login_ok = False
             try:
                 login_ok = self.angel_client.login()
@@ -504,6 +549,27 @@ class TradingBot:
     
     # ==================== Trading Loop ====================
     
+    def _create_price_stream(self):
+        """Build the tick source for the configured data source.
+
+        Angel One pushes ticks over a websocket. Other feeds have no push
+        channel, so they are polled on a timer instead; both expose the same
+        subscribe/connect/on_price_update contract, so the live loop does not
+        care which one it got.
+        """
+        if self.data_source == "angel":
+            return AngelWebSocket(
+                api_key=self.angel_client.market_api_key,
+                client_id=self.angel_client.client_id,
+                feed_token=self.angel_client.feed_token,
+                auth_token=self.angel_client.auth_token,
+            )
+
+        from src.datafeed.polling import PollingPriceFeed
+
+        interval = float(self.config.get("data_poll_seconds", 3.0))
+        return PollingPriceFeed(self.angel_client.feed, interval_seconds=interval)
+
     def _on_price_update(self, symbol: str, price_data: Dict) -> None:
         """Callback for real-time price updates"""
         indicators = None
@@ -1495,20 +1561,17 @@ class TradingBot:
         ]
         symbol_map = {str(stock['token']): stock['symbol'] for stock in self.selected_stocks}
         
-        # Use market_api_key for WebSocket
-        self.websocket = AngelWebSocket(
-            api_key=self.angel_client.market_api_key,
-            client_id=self.angel_client.client_id,
-            feed_token=self.angel_client.feed_token,
-            auth_token=self.angel_client.auth_token
-        )
-        
+        self.websocket = self._create_price_stream()
         self.websocket.on_price_update = self._on_price_update
         self.websocket.subscribe(tokens, symbol_map)
         self.websocket.connect()
-        
-        logger.info(f"ðŸ“¡ WebSocket monitoring started for {len(tokens)} stocks")
-        self._log_activity("TRADING", f"Active trading started - Monitoring {len(tokens)} stocks via WebSocket")
+
+        transport = "WebSocket" if self.data_source == "angel" else "polling"
+        logger.info(f"Price monitoring started for {len(tokens)} stocks via {transport}")
+        self._log_activity(
+            "TRADING",
+            f"Active trading started - Monitoring {len(tokens)} stocks via {transport}"
+        )
     
     def switch_strategy(self, strategy_name: str, force: bool = False, repick_stocks: bool = True) -> Dict[str, Any]:
         """
@@ -1887,19 +1950,14 @@ class TradingBot:
                 for stock in self.selected_stocks
             ]
             
-            # Create new WebSocket connection
-            self.websocket = AngelWebSocket(
-                api_key=self.angel_client.market_api_key,
-                client_id=self.angel_client.client_id,
-                feed_token=self.angel_client.feed_token,
-                auth_token=self.angel_client.auth_token
-            )
-            
+            # Create a new price stream for the newly selected stocks
+            self.websocket = self._create_price_stream()
+
             self.websocket.on_price_update = self._on_price_update
             self.websocket.subscribe(tokens)
             self.websocket.connect()
-            
-            logger.success(f"ðŸ“¡ WebSocket reconnected with {len(tokens)} new stocks")
+
+            logger.success(f"Price stream reconnected with {len(tokens)} new stocks")
             self._log_activity("WEBSOCKET", f"Reconnected with {len(tokens)} new stocks after strategy switch")
             
         except Exception as e:
