@@ -1,513 +1,245 @@
-# 📈 Professional Intraday Trading Bot
+# Intraday Trading Bot (NSE)
 
-An **institutional-grade** automated trading bot for Indian stock market (NSE) using **enhanced VWAP + RSI strategy** with multi-layer confirmation.
+An automated intraday trading bot for Indian equities, with a research harness
+for deciding whether a strategy is worth running at all.
 
-[![Strategy Rating](https://img.shields.io/badge/Strategy-Professional%20(10%2F10)-brightgreen)]()
-[![Win Rate](https://img.shields.io/badge/Expected%20Win%20Rate-70%25-success)]()
-[![Python](https://img.shields.io/badge/Python-3.8%2B-blue)]()
-
----
-
-## 🎯 Strategy Overview - Professional Grade
-
-This bot implements **6 professional algorithmic trading techniques** for institutional-quality signals:
-
-| Filter | Purpose | Impact |
-|--------|---------|--------|
-| ✅ **Candle Close Confirmation** | Wait for 1-min candle close (no tick noise) | -40% false signals |
-| ✅ **VWAP Crossover** | Price crosses above VWAP (bullish breakout) | Core signal |
-| ✅ **Consolidation Detection** | Skip "hugging" zones (whipsaw protection) | -30% bad trades |
-| ✅ **Volume Surge (1.5x+)** | Confirm breakout with strong volume | +20% win rate |
-| ✅ **RSI Filtering (40-70)** | Neutral zone (not overbought/oversold) | Quality filter |
-| ✅ **Pivot Point Confluence** | Double confirmation with S/R levels | +15% win rate |
-
-**Result**: 70% win rate (vs 36% before), 60% fewer signals, 80% fewer false positives
+It can run entirely **without a broker account**: market data comes from a
+pluggable feed (Dhan or Yahoo Finance), execution is simulated, and the live
+loop drives the same strategy code either way.
 
 ---
 
-## 🔄 How It Works
+## Status: the bundled strategy does not work
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                    ENHANCED DAILY WORKFLOW                       │
-├──────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  8:30 AM  →  🔍 Pre-Market Analysis (50 Nifty stocks)           │
-│               • Calculate previous day pivot points (P/R1/S1)    │
-│               • Score by: ATR + Volume + Trend + RSI             │
-│               • Select top 2 stocks                              │
-│                                                                  │
-│  9:15 AM  →  📡 Start live monitoring (WebSocket)               │
-│               • 1-minute candle aggregation                      │
-│               • Real-time VWAP calculation                       │
-│               • Live indicator updates                           │
-│                                                                  │
-│  9:30 AM  →  🎯 Trading begins (6-layer filtering)              │
-│               1️⃣ Wait for candle CLOSE above VWAP               │
-│               2️⃣ Check NOT consolidating (hugging filter)       │
-│               3️⃣ Confirm volume surge (≥1.5x average)           │
-│               4️⃣ Validate RSI in neutral zone (40-70)           │
-│               5️⃣ Optional: Pivot point confluence               │
-│               6️⃣ Execute with ATR-based stop & target           │
-│                                                                  │
-│  During   →  📊 Position Management                             │
-│  Market      • Track: Target (Entry + 4×ATR)                    │
-│               • Monitor: Stop Loss (Entry - 2×ATR)              │
-│               • Exit: RSI > 70 OR VWAP breakdown                │
-│                                                                  │
-│  3:15 PM  →  ⏰ Forced square-off (all positions)               │
-│                                                                  │
-│  3:30 PM  →  📝 Daily report with transaction costs             │
-│                                                                  │
-└──────────────────────────────────────────────────────────────────┘
-```
+The implemented strategy is a 3-minute opening-range breakout on Nifty 50 gap
+extremes. Measured over 248 sessions (~1 year) of real NSE data, ₹1L capital,
+25% notional per trade, Zerodha intraday charges:
+
+| | |
+|---|---|
+| Trades | 279 |
+| Win rate | 44.1% |
+| Gross P&L | **−₹1,077** (negative before costs) |
+| Costs | ₹7,142 |
+| **Net P&L** | **−₹8,219 (−8.22% on capital)** |
+| Profit factor | 0.72 |
+
+All 18 target/stop combinations lose. Flipping the premise from fade to
+momentum improves it materially — gross turns positive (+₹4,546), win rate
+rises to 51.9% — but still nets negative, and break-even sits at **2.6 basis
+points of slippage per leg**, below realistic NSE friction.
+
+A signal-significance test settles it: at seven horizons from 30 minutes to 5
+days, with no stops, targets or costs, **no horizon clears |t| > 2 once market
+beta is removed**. The entry carries no measurable information.
+
+Full workings, including the parameter grids and slippage curves, are in
+[UNIVEST_NOTES.md](UNIVEST_NOTES.md).
+
+**Treat this repo as a research harness with a worked negative example, not as
+a money-making bot.** Paper trade anything you build here, and read the cost
+and slippage sections before believing any backtest — including your own.
 
 ---
 
-## 🚀 Quick Start
-
-### Prerequisites
-- Python 3.8+
-- Angel One trading account
-- Paper trading recommended for first 2-4 weeks
-
-### Installation
+## Quick start
 
 ```bash
-# 1. Clone repository
-git clone <your-repo-url>
-cd trading-bot
-
-# 2. Install dependencies
 pip install -r requirements.txt
 
-# 3. Configure API keys
-cp .env.example .env
-# Edit .env with your Angel One credentials:
-# - ANGEL_CLIENT_ID
-# - ANGEL_PASSWORD
-# - ANGEL_API_KEY
-# - ANGEL_TOTP_SECRET
+# Backtest with no account of any kind (Yahoo, ~30 days of history)
+python scripts/backtest.py --days 20
 
-# 4. Run the bot
-python run.py
+# Deeper history via Dhan (5 years available, 90 days per request)
+export DHAN_CLIENT_ID=...      # your dhanClientId
+export DHAN_ACCESS_TOKEN=...   # web.dhan.co -> DhanHQ Trading APIs
+python scripts/backtest.py --feed dhan --days 250 --sweep
 ```
 
-### Dashboard Access
-
-Open browser: `http://localhost:5000`
-
-**Features**:
-- 📊 Selected stocks with pivot levels
-- 💹 Live positions with P&L (gross + net)
-- 📈 Real-time indicators (VWAP, RSI, Volume)
-- 📋 Trade history with R:R ratios
-- 🔔 Activity logs (IST timezone)
+Run the bot itself with `python run.py`, and open the dashboard at
+`http://localhost:5000`.
 
 ---
 
-## ⚙️ Configuration
+## The implemented strategy
 
-### Strategy Parameters
+A 3-minute breakout on the opening range, sized by the Nifty's gap. The exact
+rules are in [STRATEGY_RULES.md](STRATEGY_RULES.md); any deviation in code is a
+bug.
 
-The bot uses sensible defaults but can be customized in code:
-
-```python
-# In vwap_rsi_strategy.py or via config
-consolidation_threshold = 0.005      # 0.5% hugging detection
-volume_breakout_threshold = 1.5      # Minimum 1.5x average volume
-use_pivot_confluence = True          # Enable pivot filtering
-require_pivot_confluence = False     # Optional (True = strict mode)
-
-rsi_oversold = 40                    # Lower RSI bound
-rsi_overbought = 70                  # Upper RSI bound
-stop_loss_percent = 0.5              # Fallback if no ATR
-target_percent = 1.0                 # Fallback if no ATR
+```
+~9:10  Rank Nifty 50 by pre-open gap: top 4 and bottom 4
+ 9:15  Classify the Nifty gap (>+0.2% UP, <-0.2% DOWN, else FLAT)
+       Pick stocks and lock a direction for the day
+ 9:18  Reference candle (9:15-9:18) complete; record its high and low
+ 9:18+ Enter when a 3-minute candle CLOSES beyond that range
+       Stop: opposite end of the reference candle (or 1% on wide candles)
+       Target: 1% from entry
+15:00  No new entries
+15:15  Square off everything
 ```
 
-### Risk Management
-
-```python
-# In risk_manager.py
-max_daily_loss_percent = 2.0         # Max 2% capital loss per day
-max_trades_per_day = 5              # Limit trades to avoid overtrading
-max_position_size_percent = 25       # Max 25% capital per position
-```
-
-### Transaction Costs
-
-```python
-# In transaction_costs.py
-broker = "zerodha"  # or "angel_one" or "upstox"
-# Automatically calculates: Brokerage, STT, GST, SEBI charges, Stamp duty
-```
+`direction_mode` selects the premise: `fade` (short the strongest gap-ups —
+the original rules) or `momentum` (trade with the gap).
 
 ---
 
-## 📊 Strategy Deep Dive
+## Market data
 
-### Entry Signal (All 6 Filters Must Pass)
+Two feeds implement one interface (`src/datafeed/base.py`), so the strategy,
+backtester and live loop are indifferent to which is in use.
 
-```python
-🟢 ENTRY CONDITIONS:
+| | Yahoo | Dhan |
+|---|---|---|
+| Account needed | no | yes |
+| 1-minute history | ~30 days | **5 years** |
+| Real-time | not guaranteed | yes |
+| Max per request | 8 days | 90 days |
 
-1. Candle Close Confirmation ✅
-   - Wait for 1-minute candle to close (second 58-60)
-   - Use candle close price, not tick LTP
-   
-2. VWAP Crossover ✅
-   - Candle close price > VWAP
-   - Previous close <= VWAP (crossover)
-   
-3. NOT Consolidating ✅
-   - 4 out of 5 recent candles NOT within 0.5% of VWAP
-   - Avoids whipsaw zones
-   
-4. Volume Surge ✅
-   - Current volume >= 1.5x average volume
-   - Confirms breakout strength
-   
-5. RSI Neutral Zone ✅
-   - 40 <= RSI <= 70
-   - Not overbought/oversold
-   
-6. Pivot Confluence (Optional) ✅
-   - Price near/above pivot point, R1, or R2
-   - Double confirmation with S/R levels
+Neither vendor serves a 3-minute candle, so both fetch 1-minute bars and
+resample. NSE opens at 09:15 — 555 minutes past midnight, divisible by 3 — so
+buckets align to the open and the reference candle is exact.
+
+The two feeds were cross-checked over 600 overlapping bars: mean absolute close
+difference **0.0069%**, total volume within 0.14%.
+
+Select one in `config/settings.json`:
+
+```json
+{
+  "trading_mode": "paper",
+  "data_source": "dhan",      // "angel" | "dhan" | "yfinance"
+  "data_poll_seconds": 3
+}
 ```
 
-### Exit Signal (Any Triggers Exit)
-
-```python
-🔴 EXIT CONDITIONS:
-
-1. Target Hit 🎯
-   - Price >= Entry + 4×ATR
-   - Risk:Reward = 1:2
-   
-2. Stop Loss 🛑
-   - Price <= Entry - 2×ATR
-   - Protect capital
-   
-3. RSI Overbought ⚠️
-   - RSI > 70
-   - Take profit on momentum exhaustion
-   
-4. VWAP Breakdown 📉
-   - Price crosses below VWAP
-   - Trend reversal
-   
-5. Time-Based ⏰
-   - 3:15 PM IST (forced square-off)
-   - Avoid overnight risk
-```
+Angel One pushes ticks over a websocket; the other feeds are polled on a timer
+and emit the same callbacks, so the live loop cannot tell them apart. Live
+trading requires `data_source: "angel"` — the others are data-only and refuse
+to place orders rather than faking a fill.
 
 ---
 
-## 📊 OHL Strategy (Open=High/Low)
+## Research tools
 
-The bot supports an alternative **OHL (Open=High/Low)** strategy that capitalizes on strong opening momentum.
+```bash
+# Single run, or a target/stop grid, on either premise
+python scripts/backtest.py --feed dhan --days 250 --direction momentum
+python scripts/backtest.py --feed dhan --days 250 --direction both
+python scripts/backtest.py --feed dhan --days 250 --sweep
 
-### OHL Stock Picker Filters
+# Charge slippage per leg -- usually the number that decides everything
+python scripts/backtest.py --feed dhan --days 250 --slippage-bps 3
 
-```
-OHL Stock Picker Logic:
-│
-├── Filter 1: Price Range (₹100 - ₹5000)
-│   └── Ensures adequate liquidity and manageable position sizes
-│
-├── Filter 2: Gap Detection
-│   ├── Gap Up: Today Open > Yesterday Close (bullish bias)
-│   └── Gap Down: Today Open < Yesterday Close (bearish bias)
-│
-├── Filter 3: Volume Spike (Strict)
-│   └── Pre-market volume > 2x average (confirms interest)
-│
-├── Filter 4: ATR Filter
-│   └── ATR% between 1.5% - 4% (need volatility but not extreme)
-│
-└── Filter 5: Previous Day Trend Clarity
-    └── Prev day range / Prev day close > 1% (trending day)
+# Does the entry predict anything at all, at any horizon?
+python scripts/signal_horizon.py --cache-dir .cache --direction momentum
 ```
 
-### OHL Entry Flow
+`--cache-dir` stores downloaded candles so repeat runs and sweeps are instant
+rather than re-fetching ~150 requests.
 
-```
-09:15 AM - Market Open
-    │
-    ▼
-09:16 AM - First Check (DO NOT ENTER YET)
-    │   ├── Scan all stocks for O=H or O=L (0.06% buffer)
-    │   ├── Tag stocks: "potential_long" or "potential_short"
-    │   └── Subscribe Nifty token, record Nifty open price
-    │
-    ▼
-09:16-09:30 AM - Range Formation
-    │   ├── Track each tagged stock's high/low
-    │   ├── Track Nifty direction (current vs open)
-    │   └── Discard stocks where OHL condition breaks
-    │
-    ▼
-09:30-09:45 AM - Entry Window
-    │   ├── Nifty Up + O=L stock → Valid BUY candidate
-    │   ├── Nifty Down + O=H stock → Valid SHORT candidate
-    │   ├── Confirm OHL still valid (high not breached for short)
-    │   └── Wait for range breakout trigger
-    │
-    ▼
-Range Break Detected
-    │   ├── Long: Price > 15-min high → BUY
-    │   └── Short: Price < 15-min low → SELL
-    │
-    ▼
-Execute Order
-    ├── Entry: Breakout price
-    ├── SL: Day High (short) or Day Low (long) OR 10-min range
-    └── Target: 1:1.5 to 1:2 Risk-Reward
+Two things the raw `BacktestEngine` does not do, which the runner adds: it
+reports P&L in **points per share** with no position sizing, and it applies **no
+fees**. A 2-point move on a ₹268 stock and on a ₹2,329 stock score identically
+until you fix both.
+
+### Scoring an advisory you follow
+
+Univest and similar services publish a hit rate on gross moves, which omits the
+two things that decide whether following them pays: costs, and how much of the
+move was the market. Log calls by hand and score them properly:
+
+```bash
+python scripts/log_signal.py --symbol RELIANCE --side LONG \
+    --entry 1305.50 --stop 1292 --target 1332
+python scripts/evaluate_signals.py --feed dhan --slippage-bps 3
 ```
 
-### OHL vs VWAP Strategy
-
-| Aspect | VWAP+RSI Strategy | OHL Strategy |
-|--------|-------------------|--------------|
-| **Entry Time** | Anytime 9:30 AM - 3:00 PM | 9:30 AM - 9:45 AM only |
-| **Signal Type** | VWAP crossover + momentum | Opening pattern + breakout |
-| **Trades/Day** | 4-8 per stock | 1-2 per stock |
-| **Hold Duration** | Minutes to hours | 30 min to few hours |
-| **Best For** | Trending markets | Gap days with momentum |
-
-### Position Sizing
-
-```python
-# ATR-based dynamic sizing
-Risk per trade = Capital × (stop_loss_percent / 100)
-Price difference = Entry - Stop Loss (from 2×ATR)
-Quantity = Risk Amount / Price Difference
-
-# Example:
-Capital = ₹100,000
-Risk = 0.5% = ₹500
-Entry = ₹1000, Stop Loss = ₹990 (ATR-based)
-Quantity = ₹500 / ₹10 = 50 shares
-```
+See [signals/README.md](signals/README.md). The report refuses to conclude
+anything below 20 signals.
 
 ---
 
-## 🏗️ Architecture
+## Risk management
 
-### Core Modules
+Configured in `config/settings.json`, enforced in `src/strategy/risk_manager.py`:
+
+| setting | default | meaning |
+|---|---|---|
+| `max_daily_loss_percent` | 2.0 | halt trading for the day |
+| `max_trades_per_day` | 2 | overtrading limit |
+| `max_position_size_percent` | 25 | cap per position |
+| `square_off_time` | 15:15 | no overnight exposure |
+
+Transaction costs (`src/analysis/transaction_costs.py`) model brokerage, STT,
+exchange charges, GST, SEBI fees and stamp duty for Zerodha, Angel One and
+Upstox. Note that intraday STT is 0.025% on the sell side only, while delivery
+pays 0.1% on **both** — holding longer to amortise costs does not work the way
+it first appears.
+
+---
+
+## Architecture
 
 ```
-trading-bot/
-├── src/
-│   ├── analysis/
-│   │   ├── indicators.py          # Live VWAP, RSI, ATR + candle close
-│   │   ├── pivot_calculator.py    # Daily S/R levels (NEW)
-│   │   ├── transaction_costs.py   # Fee calculator (NEW)
-│   │   ├── pre_market.py          # Stock selection + pivots
-│   │   └── stock_scorer.py        # Multi-factor ranking
-│   ├── strategy/
-│   │   ├── vwap_rsi_strategy.py   # 6-layer entry logic (ENHANCED)
-│   │   ├── risk_manager.py        # Position sizing & limits
-│   │   └── base_strategy.py       # Abstract strategy interface
-│   ├── broker/
-│   │   ├── angel_client.py        # Angel One API + prev day OHLC
-│   │   ├── websocket_client.py    # Real-time tick data
-│   │   └── paper_trader.py        # Simulated trading
-│   ├── executor/
-│   │   ├── order_manager.py       # Order execution
-│   │   └── position_tracker.py    # P&L tracking
-│   ├── core/
-│   │   ├── scheduler.py           # APScheduler (IST timezone)
-│   │   └── config_manager.py      # Configuration
-│   └── utils/
-│       └── timezone.py            # IST utilities
-├── dashboard/                      # Web UI
-├── run.py                          # Main entry point
-└── requirements.txt
+src/
+├── datafeed/          # Broker-independent market data
+│   ├── base.py            # MarketDataFeed interface
+│   ├── dhan_feed.py       # DhanHQ v2 (real-time, 5y history)
+│   ├── yfinance_feed.py   # Yahoo (no account, ~30d)
+│   ├── bars.py            # Resampling shared by both feeds
+│   ├── polling.py         # Websocket-shaped tick source
+│   ├── broker_adapter.py  # Feed dressed as the broker client
+│   ├── instruments.py     # NSE symbol -> security id
+│   └── symbols.py         # Angel/Yahoo symbol translation
+├── strategy/
+│   ├── three_minute_strategy.py
+│   ├── risk_manager.py
+│   └── strategy_registry.py
+├── analysis/          # Pre-market, pickers, indicators, costs
+├── broker/            # Angel One client, websocket, paper trader
+├── executor/          # Order manager, position tracker
+├── core/              # Bot orchestration, config, scheduler
+└── api/               # Flask server for the dashboard
+
+scripts/
+├── backtest.py            # Backtest, sweeps, slippage
+├── signal_horizon.py      # Signal significance test
+├── log_signal.py          # Record an advisory call
+└── evaluate_signals.py    # Score recorded calls
 ```
 
-### Data Flow
+Angel One is an **optional** dependency. Its client imports the SmartApi SDK at
+module level, so it is imported lazily — a missing SDK is reported only when
+`data_source` is `angel`.
+
+---
+
+## Configuration
+
+`.env` (only for Angel One live trading):
 
 ```
-Angel One API
-    ↓
-Historical Candles → Pre-Market Analysis → Pivot Calculation
-    ↓                                           ↓
-WebSocket Ticks → Live Indicators → Strategy (6 filters) → Order Manager
-    ↓                                           ↓
-Transaction Costs Calculator ← Position Tracker → Dashboard
+ANGEL_CLIENT_ID / ANGEL_PASSWORD / ANGEL_TOTP_SECRET
+ANGEL_TRADING_API_KEY / ANGEL_HISTORICAL_API_KEY / ANGEL_MARKET_API_KEY
 ```
 
----
-
-## 📈 Expected Performance
-
-### Backtesting Results (Simulated)
-
-| Metric | Before (Old) | After (New) | Improvement |
-|--------|--------------|-------------|-------------|
-| **Signals/Day** | 25 | 10 | -60% (quality over quantity) |
-| **False Signals** | 64% | 10% | -84% |
-| **Win Rate** | 36% | 70% | +94% |
-| **Avg R:R** | 1:1.3 | 1:1.8 | +38% |
-| **Whipsaw Losses** | 40% | 8% | -80% |
-
-### Real-World Expectations
-
-- **Win Rate**: 60-70% (depends on market conditions)
-- **Trades/Day**: 8-12 signals (2 stocks × 4-6 signals each)
-- **Average Win**: +1.5% to +2.5%
-- **Average Loss**: -0.5% (tight ATR stops)
-- **Daily P&L**: +0.5% to +1.5% of capital (good days)
+`DHAN_CLIENT_ID` / `DHAN_ACCESS_TOKEN` for the Dhan feed. Dhan tokens are
+short-lived; when one expires every call returns `DH-901` and the feed says so
+explicitly.
 
 ---
 
-## 🛡️ Risk Management
+## Notes
 
-### Built-in Protections
+Earlier versions of this README documented a VWAP+RSI strategy and an OHL
+strategy, with a claimed 70% win rate. Both strategies were removed from the
+code in `4ff4638`, and that win rate was never reproducible from any stated
+sample or cost basis. Both have been dropped from this document rather than
+left to mislead.
 
-1. **Daily Loss Limit**: Auto-stop at 2% capital loss
-2. **Max Trades/Day**: 5 trades maximum (avoid revenge trading)
-3. **Position Size Limit**: Max 25% capital per stock
-4. **Time-Based**: No trades after 3:00 PM, square-off at 3:15 PM
-5. **ATR-Based Stops**: Dynamic based on volatility
-6. **Whipsaw Protection**: Multi-layer filtering
+## Disclaimer
 
-### Recommended Practices
-
-- ✅ Start with paper trading (2-4 weeks)
-- ✅ Test on small capital first (₹10,000-₹50,000)
-- ✅ Monitor for full week before scaling
-- ✅ Review daily logs and P&L
-- ✅ Adjust parameters based on results
-- ❌ Don't override risk limits manually
-- ❌ Don't trade on low-liquidity stocks
-- ❌ Don't run without stop-loss validation
-
----
-
-## 🧪 Testing
-
-### Paper Trading Mode
-
-```python
-# In run.py or config
-PAPER_TRADING = True  # Simulated orders, no real money
-```
-
-Benefits:
-- Test strategy with live market data
-- Validate all 6 filters working correctly
-- Measure actual win rate
-- No financial risk
-
-### Validation Checklist
-
-- [ ] Pre-market analysis selects 2 stocks with pivots
-- [ ] Live indicators update every second
-- [ ] Entry signals only on candle close
-- [ ] Consolidation filter blocks whipsaws
-- [ ] Volume filter blocks weak breakouts
-- [ ] Pivot confluence shows double confirmation
-- [ ] Stop-loss and target calculated correctly
-- [ ] Transaction costs reflected in net P&L
-- [ ] Dashboard shows IST timestamps
-- [ ] Square-off executes at 3:15 PM
-
----
-
-## 📚 Professional Techniques Implemented
-
-This bot includes techniques used by professional algorithmic traders:
-
-1. ✅ **Candle Close Confirmation** - Eliminate tick noise
-2. ✅ **Pivot Point S/R Levels** - Context-aware entries
-3. ✅ **Consolidation Detection** - Avoid whipsaw zones
-4. ✅ **Volume Surge Filtering** - Breakout confirmation
-5. ✅ **Multi-Timeframe Analysis** - Pre-market + real-time
-6. ✅ **Transaction Cost Modeling** - Realistic P&L
-
-**Rating**: 6/6 professional techniques ⭐⭐⭐⭐⭐⭐
-
----
-
-## 🔧 Troubleshooting
-
-### Common Issues
-
-**1. No entry signals generated**
-- Check if consolidation threshold is too strict (increase to 0.8%)
-- Lower volume threshold to 1.3x if market is quiet
-- Verify pivot points calculated in pre-market logs
-
-**2. Too many signals (still getting whipsaws)**
-- Increase volume threshold to 1.8x
-- Enable `require_pivot_confluence = True` (strict mode)
-- Verify candle close detection working (check logs)
-
-**3. Dashboard shows wrong timezone**
-- All timestamps now use IST (fixed)
-- Check `src/utils/timezone.py` imported correctly
-
-**4. API rate limits**
-- Angel One: ~3 req/sec for historical data
-- Pre-market analysis caches pivot data
-- WebSocket for real-time (no rate limits)
-
----
-
-## 📝 Changelog
-
-### Version 2.0 - Professional Grade (Current)
-
-**Major Enhancements**:
-- ✅ Candle close confirmation (no tick trading)
-- ✅ Pivot point integration (double confirmation)
-- ✅ Consolidation detection (whipsaw protection)
-- ✅ Volume surge filter upgraded (0.8x → 1.5x)
-- ✅ Transaction cost calculator (realistic P&L)
-- ✅ IST timezone support (works on any server)
-
-**New Modules**:
-- `pivot_calculator.py` - S/R level calculation
-- `transaction_costs.py` - Fee breakdown (Zerodha/Angel One/Upstox)
-
-**Files Modified**: 10 | **Lines Added**: 700+ | **Rating**: 10/10
-
-### Version 1.0 - Basic Implementation
-
-- Basic VWAP + RSI strategy
-- Tick-based signals
-- Fixed percentage stops
-- Rating: 4/10
-
----
-
-## ⚠️ Disclaimer
-
-**Important**: This bot is for educational and research purposes only.
-
-- Trading involves substantial risk of loss
-- Past performance does not guarantee future results
-- Always test with paper trading first (minimum 2-4 weeks)
-- Start with small capital (₹10,000-₹50,000)
-- Never trade with money you can't afford to lose
-- Consult a financial advisor before live trading
-- The developers are not responsible for financial losses
-
-**Regulatory**: Ensure compliance with SEBI regulations and Angel One terms of service.
-
----
-
-## 📞 Support
-
-For issues, questions, or contributions:
-- 📧 Create an issue on GitHub
-- 📚 Review the walkthrough documentation
-- 🔍 Check logs in `logs/` directory
-
----
-
-
-**Built with ❤️ using Python, Angel One API, and professional algorithmic trading techniques**
+For education and research. Trading carries risk of loss; intraday leverage
+magnifies it. Nothing here is investment advice. The bundled strategy loses
+money on a year of historical data — do not run it with real capital.
