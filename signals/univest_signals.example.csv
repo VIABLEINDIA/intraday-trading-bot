@@ -1,0 +1,5 @@
+date,time,symbol,side,instrument,entry,stop,target,exit_price,exit_time,exit_reason,source,notes
+2026-09-01,09:32,RELIANCE,LONG,EQ,1285.00,1272.00,1311.00,,,,univest,reconstructed from advised levels
+2026-09-02,10:15,SBIN,SHORT,EQ,1016.00,1026.00,996.00,,,,univest,
+2026-09-03,09:40,INFY,LONG,EQ,,,,,,,univest,no levels given - entry at call time
+2026-09-04,11:05,TCS,SHORT,EQ,2329.00,2352.00,2283.00,2306.11,14:20,MANUAL,univest,reported actual fill

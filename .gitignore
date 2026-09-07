@@ -62,3 +62,6 @@ Thumbs.db
 # Project specific
 *.bak
 temp/
+# Personal trading record, not repository content
+signals/univest_signals.csv
+data/scrip_master.csv

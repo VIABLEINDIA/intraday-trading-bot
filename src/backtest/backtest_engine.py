@@ -139,6 +139,10 @@ class BacktestEngine:
         self.stop_loss_percent = float(params.get("stop_loss_percent", 1.0))
         self.target_percent = float(params.get("target_percent", 1.0))
         self.max_trades_per_day = int(params.get("max_trades_per_day", 2))
+        # "fade"     - short the strongest gap-ups, buy the weakest gap-downs
+        #              (mean reversion; the original rules)
+        # "momentum" - trade with the gap instead of against it
+        self.direction_mode = str(params.get("direction_mode", "fade")).lower()
 
     def run(
         self,
@@ -347,29 +351,43 @@ class BacktestEngine:
     def _select_stocks(
         self, ranked_stocks: List[Dict], nifty_gap: Dict
     ) -> List[Dict]:
-        """Select stocks based on Nifty gap direction."""
+        """Select stocks based on Nifty gap direction.
+
+        Which stocks are picked never changes — the top gainers and the bottom
+        losers by opening gap. Only the side traded depends on
+        ``direction_mode``: "fade" bets the gap reverts, "momentum" bets it
+        continues. Because entry requires a breakout in the traded direction,
+        flipping the side also flips which side of the reference candle must be
+        broken, so the two modes are genuine opposites rather than the same
+        trade re-labelled.
+        """
         gap_status = nifty_gap.get("gap_status", "FLAT")
         max_trades = self.max_trades_per_day
+        fading = self.direction_mode != "momentum"
+
+        # Side taken on the strongest gap-up names, and on the weakest ones.
+        top_side = "SHORT" if fading else "LONG"
+        bottom_side = "LONG" if fading else "SHORT"
 
         if gap_status == "GAP_UP":
             selected = [s.copy() for s in ranked_stocks[:max_trades]]
             for s in selected:
-                s["direction"] = "SHORT"
+                s["direction"] = top_side
 
         elif gap_status == "GAP_DOWN":
             selected = [s.copy() for s in ranked_stocks[-max_trades:]]
             for s in selected:
-                s["direction"] = "LONG"
+                s["direction"] = bottom_side
 
         else:
             trades_per_side = max(1, max_trades // 2)
-            short_picks = [s.copy() for s in ranked_stocks[:trades_per_side]]
-            for s in short_picks:
-                s["direction"] = "SHORT"
-            long_picks = [s.copy() for s in ranked_stocks[-trades_per_side:]]
-            for s in long_picks:
-                s["direction"] = "LONG"
-            selected = short_picks + long_picks
+            top_picks = [s.copy() for s in ranked_stocks[:trades_per_side]]
+            for s in top_picks:
+                s["direction"] = top_side
+            bottom_picks = [s.copy() for s in ranked_stocks[-trades_per_side:]]
+            for s in bottom_picks:
+                s["direction"] = bottom_side
+            selected = top_picks + bottom_picks
 
         return selected
 

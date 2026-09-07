@@ -1,12 +1,15 @@
 # ===================================
 # INTRADAY TRADING BOT DEPENDENCIES
 # ===================================
+# These cover everything except live Angel One trading: backtesting, the
+# research scripts, paper trading, the dashboard, and the Dhan and Yahoo data
+# feeds. For live trading through Angel One, also install:
+#
+#     pip install -r requirements-angel.txt
 
-# Angel One API
-smartapi-python>=1.3.6
-pyotp>=2.9.0
-websocket-client>=1.6.0
-logzero>=1.7.0
+# Market Data
+yfinance>=0.2.40              # Yahoo feed (no account needed)
+# The Dhan feed uses the REST API directly and needs no SDK.
 
 # Data Processing & Analysis
 pandas>=2.0.0
@@ -16,7 +19,7 @@ ta>=0.11.0                    # Technical Analysis (RSI, VWAP, etc.)
 # API Server (for Dashboard)
 flask>=3.0.0
 flask-cors>=4.0.0
-PyJWT>=2.8.0              # JWT authentication
+PyJWT>=2.8.0                  # JWT authentication
 
 # Scheduling
 schedule>=1.2.0
