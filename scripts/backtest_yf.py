@@ -172,6 +172,8 @@ def main() -> int:
                     help="Percent of capital deployed per trade (MIS notional)")
     ap.add_argument("--broker", default="zerodha",
                     help="Fee schedule to apply: zerodha, angel_one, upstox")
+    ap.add_argument("--sweep", action="store_true",
+                    help="Grid the target/stop parameters instead of a single run")
     args = ap.parse_args()
 
     logger.remove()
@@ -209,32 +211,81 @@ def main() -> int:
     else:
         targets = available[1:][-args.days:]  # skip the oldest: it has no prior session
 
-    engine = BacktestEngine(config)
     costs = TransactionCostCalculator(args.broker)
-    sessions = 0
-    all_trades: List[Dict] = []
-    daily_net: List[float] = []
 
-    for date_str in targets:
-        nifty_slice = slice_session(nifty, date_str)
-        if not nifty_slice:
-            continue
-        stock_slices = {
-            sym: sliced
-            for sym, candles in all_candles.items()
-            if (sliced := slice_session(candles, date_str))
-        }
-        if not stock_slices:
-            continue
+    def evaluate(target_pct: float, sl_pct: float, verbose: bool):
+        """Replay every target session with one parameter set."""
+        cfg = json.loads(json.dumps(config))  # deep copy; engine reads nested params
+        params = cfg.setdefault("strategies", {}).setdefault("three_minute", {}).setdefault(
+            "params", {}
+        )
+        params["target_percent"] = target_pct
+        params["stop_loss_percent"] = sl_pct
+        engine = BacktestEngine(cfg)
 
-        result = engine.run(date_str, nifty_slice, stock_slices, stocks)
-        raw = [t.to_dict() if hasattr(t, "to_dict") else t for t in (result.trades or [])]
-        day_trades = [size_and_cost(t, args.capital, args.alloc_pct, costs) for t in raw]
+        trades: List[Dict] = []
+        per_day: List[float] = []
+        n_sessions = 0
 
-        print_day(result, date_str, day_trades)
-        sessions += 1
-        all_trades.extend(day_trades)
-        daily_net.append(sum(t["net_rupees"] for t in day_trades))
+        for date_str in targets:
+            nifty_slice = slice_session(nifty, date_str)
+            if not nifty_slice:
+                continue
+            stock_slices = {
+                sym: sliced
+                for sym, candles in all_candles.items()
+                if (sliced := slice_session(candles, date_str))
+            }
+            if not stock_slices:
+                continue
+
+            result = engine.run(date_str, nifty_slice, stock_slices, stocks)
+            raw = [t.to_dict() if hasattr(t, "to_dict") else t for t in (result.trades or [])]
+            day_trades = [size_and_cost(t, args.capital, args.alloc_pct, costs) for t in raw]
+
+            if verbose:
+                print_day(result, date_str, day_trades)
+            n_sessions += 1
+            trades.extend(day_trades)
+            per_day.append(sum(t["net_rupees"] for t in day_trades))
+
+        return trades, per_day, n_sessions
+
+    if args.sweep:
+        print(f"\n{'=' * 78}")
+        print(f"  PARAMETER SWEEP over {len(targets)} sessions"
+              f"   (capital Rs{args.capital:,.0f}, {args.alloc_pct:.0f}%/trade)")
+        print(f"{'=' * 78}")
+        print(f"  {'target%':>8} {'sl%':>6} {'trades':>7} {'win%':>7} "
+              f"{'gross':>11} {'costs':>10} {'NET':>11} {'PF':>6}")
+        print(f"  {'-' * 74}")
+
+        for tgt in (0.5, 0.75, 1.0, 1.5, 2.0, 3.0):
+            for sl in (0.5, 1.0, 1.5):
+                tr, _, _ = evaluate(tgt, sl, verbose=False)
+                if not tr:
+                    continue
+                net = sum(t["net_rupees"] for t in tr)
+                gross = sum(t["gross_rupees"] for t in tr)
+                fees = sum(t["fees"] for t in tr)
+                w = [t for t in tr if t["net_rupees"] > 0]
+                lo = abs(sum(t["net_rupees"] for t in tr if t["net_rupees"] <= 0))
+                pf = (sum(t["net_rupees"] for t in w) / lo) if lo else float("inf")
+                print(f"  {tgt:>8.2f} {sl:>6.2f} {len(tr):>7} {len(w) / len(tr) * 100:>6.1f}% "
+                      f"{gross:>11,.2f} {fees:>10,.2f} {net:>11,.2f} {pf:>6.2f}")
+
+        print()
+        print("  Read this as a robustness check, not an optimisation target:")
+        print("  picking the best cell of a sweep this small is curve-fitting.")
+        return 0
+
+    all_trades, daily_net, sessions = evaluate(
+        float(config.get("strategies", {}).get("three_minute", {})
+              .get("params", {}).get("target_percent", 1.0)),
+        float(config.get("strategies", {}).get("three_minute", {})
+              .get("params", {}).get("stop_loss_percent", 1.0)),
+        verbose=True,
+    )
 
     net_total = sum(t["net_rupees"] for t in all_trades)
     gross_total = sum(t["gross_rupees"] for t in all_trades)
