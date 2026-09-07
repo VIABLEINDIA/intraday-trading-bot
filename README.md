@@ -160,6 +160,22 @@ anything below 20 signals.
 
 ---
 
+## Tests
+
+```bash
+pip install pytest
+python -m pytest
+```
+
+48 tests, ~3 seconds, no network. They cover the places where a bug changes the
+answer without breaking anything: candle resampling and session anchoring,
+Dhan's ambiguous epoch convention, symbol and security-id mapping, position
+sizing, transaction costs, slippage, and the signal-replay rules — including
+the deliberate choice to charge a bar spanning both stop and target as the
+stop.
+
+---
+
 ## Risk management
 
 Configured in `config/settings.json`, enforced in `src/strategy/risk_manager.py`:

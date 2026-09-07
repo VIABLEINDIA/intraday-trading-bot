@@ -187,7 +187,9 @@ class DhanFeed(MarketDataFeed):
                 ).mean()
             )
             ist_score, utc_score = in_session(as_ist), in_session(as_utc)
-            self._epoch_is_ist_wallclock = ist_score >= utc_score
+            # Coerce: the comparison yields a numpy bool, which fails `is True`
+            # identity checks and leaks a numpy type into the public attribute.
+            self._epoch_is_ist_wallclock = bool(ist_score >= utc_score)
             logger.debug(
                 f"Dhan epoch convention: "
                 f"{'IST wall-clock' if self._epoch_is_ist_wallclock else 'true UTC'} "
