@@ -20,11 +20,12 @@ Usage
 
 import argparse
 import json
+import pickle
 import sys
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -83,11 +84,47 @@ def fetch_all(feed: MarketDataFeed, stocks: List[Dict], lookback_days: int) -> D
         )
         if candles:
             out[symbol] = candles
-            print(f"  [{i:>2}/{total}] {symbol:<16} {len(candles):>5} bars", flush=True)
+            print(f"  [{i:>2}/{total}] {symbol:<16} {len(candles):>6} bars", flush=True)
         else:
             print(f"  [{i:>2}/{total}] {symbol:<16} NO DATA", flush=True)
 
     return out
+
+
+def cached_fetch(feed: MarketDataFeed, stocks: List[Dict], lookback_days: int,
+                 cache_dir: Optional[str], nifty_token: str):
+    """Fetch index + stock candles, reusing a local pickle when one exists.
+
+    A year of 3-minute bars for 50 symbols is ~150 provider requests. Caching
+    them makes re-running a sweep instant, which matters because the whole point
+    is to try several parameter sets against the same data.
+    """
+    if not cache_dir:
+        nifty = feed.get_historical_data(
+            NIFTY_SYMBOL, nifty_token, interval="THREE_MINUTE", days=lookback_days
+        )
+        return nifty, fetch_all(feed, stocks, lookback_days)
+
+    path = Path(cache_dir) / f"{feed.name}_{lookback_days}d_{len(stocks)}sym.pkl"
+    if path.exists():
+        with path.open("rb") as fh:
+            payload = pickle.load(fh)
+        print(f"Using cached candles: {path.name} "
+              f"({len(payload['stocks'])} symbols, delete the file to refresh)")
+        return payload["nifty"], payload["stocks"]
+
+    nifty = feed.get_historical_data(
+        NIFTY_SYMBOL, nifty_token, interval="THREE_MINUTE", days=lookback_days
+    )
+    all_candles = fetch_all(feed, stocks, lookback_days)
+
+    if nifty and all_candles:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("wb") as fh:
+            pickle.dump({"nifty": nifty, "stocks": all_candles}, fh)
+        print(f"Cached candles to {path}")
+
+    return nifty, all_candles
 
 
 def size_and_cost(trade: Dict, capital: float, alloc_pct: float,
@@ -176,6 +213,8 @@ def main() -> int:
                     help="Fee schedule to apply: zerodha, angel_one, upstox")
     ap.add_argument("--sweep", action="store_true",
                     help="Grid the target/stop parameters instead of a single run")
+    ap.add_argument("--cache-dir", default=None,
+                    help="Reuse downloaded candles from this directory across runs")
     ap.add_argument("--feed", default="auto", choices=["auto", "dhan", "yfinance"],
                     help="Data source. dhan needs DHAN_* env vars but reaches back 5 years; "
                          "yfinance needs no account but only ~30 days")
@@ -193,19 +232,15 @@ def main() -> int:
         return 1
     print(f"Feed: {feed.name}")
 
-    print(f"Downloading Nifty index + {len(stocks)} stocks ({args.lookback}d of 3-min bars)...")
-    nifty = feed.get_historical_data(
-        NIFTY_SYMBOL, NIFTY_TOKEN, interval="THREE_MINUTE", days=args.lookback
-    )
+    print(f"Loading Nifty index + {len(stocks)} stocks ({args.lookback}d of 3-min bars)...")
+    nifty, all_candles = cached_fetch(feed, stocks, args.lookback, args.cache_dir, NIFTY_TOKEN)
     if not nifty:
         print("ERROR: could not fetch Nifty index data", file=sys.stderr)
         return 1
-    print(f"  Nifty: {len(nifty)} bars over {len(session_dates(nifty))} sessions")
-
-    all_candles = fetch_all(feed, stocks, args.lookback)
     if not all_candles:
         print("ERROR: no stock data fetched", file=sys.stderr)
         return 1
+    print(f"  Nifty: {len(nifty)} bars over {len(session_dates(nifty))} sessions")
 
     # Only sessions where the index itself has data are testable.
     available = session_dates(nifty)
