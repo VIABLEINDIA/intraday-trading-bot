@@ -274,6 +274,45 @@ Two conclusions follow:
 The signal is, for practical purposes, noise. No parameter set, instrument
 change or cost optimisation recovers an edge that is not there.
 
+## Measuring the advisory you actually follow
+
+The strategy in this repo is noise, but the calls you act on in Univest are a
+separate question and an unmeasured one. An advisory publishes a hit rate on
+gross moves; neither of the things that decide whether following it makes money
+appears in that number — what it costs to trade, and how much of the move was
+the market rising anyway. The tooling built here answers both.
+
+```bash
+# log a call as it arrives (date/time default to now)
+python scripts/log_signal.py --symbol RELIANCE --side LONG     --entry 1305.50 --stop 1292 --target 1332
+
+# score everything logged so far
+python scripts/evaluate_signals.py --feed dhan --verbose
+python scripts/evaluate_signals.py --feed dhan --slippage-bps 3
+```
+
+Signals are scored one of two ways. Leave `exit_price` blank and the day's
+1-minute bars are replayed from the entry, taking whichever of stop or target
+is touched first and squaring off at 15:15 — that measures what the *advice*
+was worth. Fill in `exit_price` and your actual fill is scored instead, which
+is also the only route for options, whose history this repo does not fetch.
+A bar spanning both levels is charged as the stop: intrabar order is unknowable
+from OHLC, and assuming the good fill is how backtests flatter themselves.
+
+Both paths then get position sizing, real intraday charges, optional slippage,
+and a market-adjusted t-stat against the Nifty over the identical window.
+
+`src/datafeed/instruments.py` resolves any NSE symbol to a security id from
+Dhan's scrip master (cached weekly), so calls are not limited to the Nifty 50.
+
+Sample size is the thing to respect here. Under 20 signals says almost nothing,
+and the report refuses to draw a conclusion below that — this project already
+produced a 20-session sample showing a *profit* for a strategy that loses 8% a
+year. Thirty gives a first read on the sign; a hundred starts to mean something.
+
+`signals/univest_signals.csv` is git-ignored — it is a trading record, not
+repository content. `signals/univest_signals.example.csv` shows the format.
+
 ## What to do next
 
 Do not build execution or alerting on top of this strategy — that is machinery
