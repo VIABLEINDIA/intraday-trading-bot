@@ -1,19 +1,21 @@
-"""Backtest the 3-minute breakout strategy with no broker account.
+"""Backtest the 3-minute breakout strategy against a pluggable data feed.
 
 The existing backtester is driven from the dashboard and sources its candles
 from Angel One, which means it cannot run without SmartAPI credentials. This
-runner feeds the same ``BacktestEngine`` from Yahoo Finance instead, so the
-strategy can be validated before any broker is wired up.
+runner feeds the same ``BacktestEngine`` from any ``MarketDataFeed``: Dhan for
+depth (5 years of intraday history) or Yahoo for convenience (no account, ~30
+days).
 
 Each Nifty 50 stock is downloaded once and sliced per session locally, rather
-than re-fetched per date — Yahoo throttles aggressively and 1-minute bars have
-to be pulled in 7-day chunks.
+than re-fetched per date — both vendors cap how much can be pulled
+per request and chunking per date would multiply the calls.
 
 Usage
 -----
-    python scripts/backtest_yf.py --days 10
-    python scripts/backtest_yf.py --date 2026-09-04
-    python scripts/backtest_yf.py --days 10 --universe 20   # faster smoke test
+    python scripts/backtest.py --days 10
+    python scripts/backtest.py --date 2026-09-04 --feed dhan
+    python scripts/backtest.py --days 60 --feed dhan --sweep
+    python scripts/backtest.py --days 10 --universe 20      # faster smoke test
 """
 
 import argparse
@@ -31,7 +33,7 @@ from loguru import logger
 
 from src.analysis.transaction_costs import TransactionCostCalculator
 from src.backtest.backtest_engine import BacktestEngine
-from src.datafeed import YFinanceFeed
+from src.datafeed import MarketDataFeed, get_feed
 
 NIFTY_SYMBOL = "NIFTY"
 NIFTY_TOKEN = "99926000"
@@ -69,7 +71,7 @@ def slice_session(candles: List[Dict], date_str: str) -> List[Dict]:
     return [c for c in candles if c["timestamp"][:10] in keep]
 
 
-def fetch_all(feed: YFinanceFeed, stocks: List[Dict], lookback_days: int) -> Dict[str, List[Dict]]:
+def fetch_all(feed: MarketDataFeed, stocks: List[Dict], lookback_days: int) -> Dict[str, List[Dict]]:
     """Download 3-minute candles once per symbol."""
     out: Dict[str, List[Dict]] = {}
     total = len(stocks)
@@ -174,6 +176,9 @@ def main() -> int:
                     help="Fee schedule to apply: zerodha, angel_one, upstox")
     ap.add_argument("--sweep", action="store_true",
                     help="Grid the target/stop parameters instead of a single run")
+    ap.add_argument("--feed", default="auto", choices=["auto", "dhan", "yfinance"],
+                    help="Data source. dhan needs DHAN_* env vars but reaches back 5 years; "
+                         "yfinance needs no account but only ~30 days")
     args = ap.parse_args()
 
     logger.remove()
@@ -181,10 +186,12 @@ def main() -> int:
 
     config = json.loads((ROOT / "config" / "settings.json").read_text(encoding="utf-8"))
     stocks = load_stock_list(args.universe)
-    feed = YFinanceFeed(cache_ttl_seconds=3600)
+    feed = get_feed(args.feed, cache_ttl_seconds=3600)
 
     if not feed.login():
+        print(f"ERROR: could not initialise the {args.feed} feed", file=sys.stderr)
         return 1
+    print(f"Feed: {feed.name}")
 
     print(f"Downloading Nifty index + {len(stocks)} stocks ({args.lookback}d of 3-min bars)...")
     nifty = feed.get_historical_data(

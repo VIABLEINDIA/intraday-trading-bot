@@ -26,30 +26,68 @@ Without an Angel One account there was no way to run or validate anything.
 `src/datafeed/` fixes that:
 
 - `base.py` — `MarketDataFeed`, the market-data half of `AngelOneClient`.
-- `yfinance_feed.py` — a Yahoo Finance implementation needing no credentials.
+- `yfinance_feed.py` — Yahoo Finance; no credentials, ~30 days of history.
+- `dhan_feed.py` — DhanHQ v2; real-time, 5 years of intraday history.
+- `bars.py` — resampling shared by both, so the reference candle is defined
+  identically no matter which feed supplied the data.
 - `symbols.py` — `SBIN-EQ`/`3045` → `SBIN.NS`, `NIFTY`/`99926000` → `^NSEI`.
+- `get_feed("auto"|"dhan"|"yfinance")` picks one.
 
-Two Yahoo quirks are handled explicitly:
+**No vendor serves a 3-minute candle** — Yahoo offers 1/2/5/15/30/60 and Dhan
+1/5/15/25/60 — so both feeds fetch 1-minute bars and resample. NSE opens at
+09:15, which is 555 minutes past midnight and divisible by 3, so buckets align
+to the open and the 09:15–09:18 reference candle is exact. Intervals that do
+not divide evenly are anchored per session instead.
 
-- **No 3-minute interval.** 1-minute bars are resampled. NSE opens at 09:15,
-  which is 555 minutes past midnight and divisible by 3, so buckets align to the
-  open naturally and the 09:15–09:18 reference candle is exact.
-- **8 days of 1-minute data per request.** Longer windows are fetched in 7-day
-  chunks and stitched, which is what makes backtesting more than two days back
-  possible at all.
+Each vendor also caps a single request (Yahoo 8 days of 1m, Dhan 90 days), so
+long windows are fetched in chunks and stitched. Without that, every backtest
+date older than two sessions failed silently on Yahoo.
+
+Dhan documents its `timestamp` as epoch seconds but ships IST wall-clock
+values. Rather than hardcode either reading, the feed infers the convention
+from the data — NSE trades 09:15–15:30, so whichever interpretation lands the
+bars inside the session is correct — and caches the verdict. Both conventions
+are unit-tested to produce identical IST bars.
 
 ## Backtesting without any broker account
 
 ```bash
 pip install yfinance loguru
-python scripts/backtest_yf.py --days 20                  # last 20 sessions
-python scripts/backtest_yf.py --date 2026-09-04          # one session
-python scripts/backtest_yf.py --days 20 --sweep          # target/stop grid
-python scripts/backtest_yf.py --days 20 --universe 10    # faster smoke test
+python scripts/backtest.py --days 20                  # last 20 sessions
+python scripts/backtest.py --date 2026-09-04          # one session
+python scripts/backtest.py --days 20 --sweep          # target/stop grid
+python scripts/backtest.py --days 20 --universe 10    # faster smoke test
 ```
 
-Yahoo retains roughly **30 days** of 1-minute history, so that is the backtest
-horizon. Longer studies need a paid or broker feed.
+## Choosing a feed
+
+`--feed auto` (the default) uses Dhan when `DHAN_CLIENT_ID` and
+`DHAN_ACCESS_TOKEN` are set, else Yahoo.
+
+| | Yahoo | Dhan |
+|---|---|---|
+| Account needed | no | yes |
+| 1-minute history | ~30 days | **5 years** |
+| Real-time | not guaranteed | yes |
+| Per request | 8 days | 90 days |
+
+Yahoo's ~30 days is enough to prove the pipeline works but far too short to
+judge an edge. Use Dhan for anything conclusive:
+
+```bash
+export DHAN_CLIENT_ID=...      # your dhanClientId
+export DHAN_ACCESS_TOKEN=...   # web.dhan.co -> DhanHQ Trading APIs
+python scripts/backtest.py --days 250 --feed dhan --sweep
+```
+
+Dhan access tokens expire quickly (typically 24h). When one lapses every call
+returns `DH-901` and the feed says so explicitly — regenerate and re-export.
+Execution remains manual in Univest; Dhan is used purely as a data source.
+
+Dhan's `securityId` for NSE equities is the NSE exchange token, the same number
+this repo already stores as the Angel One token — verified identical for all 50
+Nifty constituents — so no mapping table is needed for stocks. Indices differ
+(Nifty 50 is `13`, segment `IDX_I`) and are mapped explicitly.
 
 The runner adds what the engine omits. `BacktestEngine` reports P&L in **points
 per share** with no position sizing and no fees, so a 2-point move on a ₹268

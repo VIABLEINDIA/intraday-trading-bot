@@ -31,6 +31,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 from loguru import logger
 
+from src.datafeed import bars
 from src.datafeed.base import MarketDataFeed
 from src.datafeed.symbols import to_yf_ticker
 from src.utils.timezone import IST
@@ -118,7 +119,7 @@ class YFinanceFeed(MarketDataFeed):
             logger.debug(f"{ticker}: Yahoo returned no {yf_interval} data")
             return None
 
-        df = self._to_ist(df)
+        df = bars.to_ist(df)
         self._cache[key] = (df, _time.time())
         return df
 
@@ -160,55 +161,6 @@ class YFinanceFeed(MarketDataFeed):
         # Chunk boundaries can overlap by a bar; keep one row per timestamp.
         return df[~df.index.duplicated(keep="last")].sort_index()
 
-    @staticmethod
-    def _to_ist(df: pd.DataFrame) -> pd.DataFrame:
-        """Ensure the index is tz-aware in IST so session times are comparable."""
-        idx = df.index
-        if idx.tz is None:
-            df.index = idx.tz_localize(IST)
-        else:
-            df.index = idx.tz_convert(IST)
-        return df
-
-    @staticmethod
-    def _resample(df: pd.DataFrame, rule: str) -> pd.DataFrame:
-        """Aggregate bars to ``rule``, anchored to each session's first bar.
-
-        Anchoring per day matters for intervals that do not divide evenly into
-        the 09:15 open (e.g. 10-minute); without it pandas would bucket from
-        midnight and straddle the open.
-        """
-        agg = {"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"}
-        cols = {c: agg[c] for c in agg if c in df.columns}
-
-        out = []
-        for _, day_df in df.groupby(df.index.date):
-            origin = day_df.index[0]
-            res = day_df.resample(rule, origin=origin, label="left", closed="left").agg(cols)
-            out.append(res.dropna(subset=["Open"]))
-
-        if not out:
-            return df.iloc[0:0]
-        return pd.concat(out).sort_index()
-
-    @staticmethod
-    def _to_candles(df: pd.DataFrame) -> List[Dict]:
-        """Convert a bar frame to the candle dicts the bot expects."""
-        candles = []
-        for ts, row in df.iterrows():
-            stamp = ts.strftime("%Y-%m-%dT%H:%M:%S%z")
-            candles.append(
-                {
-                    "timestamp": stamp.replace("+0530", "+05:30"),
-                    "open": float(row["Open"]),
-                    "high": float(row["High"]),
-                    "low": float(row["Low"]),
-                    "close": float(row["Close"]),
-                    "volume": int(row["Volume"]) if pd.notna(row["Volume"]) else 0,
-                }
-            )
-        return candles
-
     # --------------------------------------------------------- MarketDataFeed
 
     def get_historical_data(
@@ -232,9 +184,9 @@ class YFinanceFeed(MarketDataFeed):
             return None
 
         if rule:
-            df = self._resample(df, rule)
+            df = bars.resample(df, rule)
 
-        return self._to_candles(df) or None
+        return bars.to_candles(df) or None
 
     def get_historical_data_for_date(
         self,
