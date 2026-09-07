@@ -43,11 +43,20 @@ Each vendor also caps a single request (Yahoo 8 days of 1m, Dhan 90 days), so
 long windows are fetched in chunks and stitched. Without that, every backtest
 date older than two sessions failed silently on Yahoo.
 
-Dhan documents its `timestamp` as epoch seconds but ships IST wall-clock
-values. Rather than hardcode either reading, the feed infers the convention
-from the data — NSE trades 09:15–15:30, so whichever interpretation lands the
-bars inside the session is correct — and caches the verdict. Both conventions
-are unit-tested to produce identical IST bars.
+Dhan's `timestamp` epoch convention is ambiguous in the docs, and getting it
+wrong shifts every bar by 5h30m — silently moving the 09:15–09:18 reference
+candle. Rather than hardcode a guess, the feed infers it: NSE trades
+09:15–15:30, so whichever interpretation lands the bars inside the session is
+correct, and the verdict is cached.
+
+Measured against the live API, Dhan ships **true UTC** epochs (100% vs 8%
+in-session match) — the opposite of the commonly assumed IST wall-clock. Both
+conventions are unit-tested to yield identical IST bars, so the feed is correct
+either way if Dhan ever changes.
+
+Cross-checked against Yahoo over 600 overlapping 3-minute bars, the two
+independent feeds agree to a mean absolute close difference of **0.0069%**
+(max 0.49%), with total volume within 0.14%.
 
 ## Backtesting without any broker account
 
@@ -161,6 +170,22 @@ not a sampling artefact. Two things still flatter these numbers: fills assume
 the exact candle close with zero slippage and no impact cost, and there is no
 survivorship correction for the Nifty 50 constituent list, which is today's
 membership applied to the past year. Both biases push the true result *lower*.
+
+## What to do next
+
+Do not build execution or alerting on top of this strategy — that is machinery
+on a negative expectancy. The infrastructure (feeds, backtester, cost model) is
+sound and reusable; the strategy is what failed. Reasonable next steps:
+
+1. **Test a different premise.** The current one fades gap extremes. Momentum
+   continuation — going *with* the gap rather than against it — is the obvious
+   opposite to try, and is a one-line change to the direction assignment in
+   `_select_stocks`.
+2. **Cut trade frequency.** Costs are a fixed ~₹7,142/year toll at 279 trades.
+   Any viable strategy must either trade far less or earn far more per trade.
+3. **Validate before building.** This whole exercise cost one afternoon and one
+   Dhan token because the backtest came before the execution layer. Keep that
+   order.
 
 ## If you want live signals on Univest
 
