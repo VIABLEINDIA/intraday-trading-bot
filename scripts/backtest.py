@@ -143,13 +143,20 @@ def cached_fetch(feed: MarketDataFeed, stocks: List[Dict], lookback_days: int,
 
 
 def size_and_cost(trade: Dict, capital: float, alloc_pct: float,
-                  costs: TransactionCostCalculator) -> Dict:
+                  costs: TransactionCostCalculator, slippage_bps: float = 0.0) -> Dict:
     """Attach quantity, gross and net rupee P&L to a raw engine trade.
 
     The engine reports P&L in points per share with no sizing and no fees, so a
     2-point gain on a 268-rupee stock and on a 2300-rupee stock look identical.
     Converting to rupees on a fixed notional per trade, then subtracting real
     intraday charges, is what makes days comparable.
+
+    ``slippage_bps`` charges basis points per leg against the trade -- you buy
+    a little higher and sell a little lower than the candle close the engine
+    assumes. It applies to both legs and in both directions, because it is a
+    cost of crossing the spread, not a directional bet. This matters more than
+    it looks: the edge here is ~0.10% per trade, so a few bps per leg is a
+    large fraction of it.
     """
     entry = float(trade.get("entry_price", 0) or 0)
     exit_price = float(trade.get("exit_price", 0) or 0)
@@ -157,6 +164,8 @@ def size_and_cost(trade: Dict, capital: float, alloc_pct: float,
 
     qty = int((capital * alloc_pct / 100.0) // entry) if entry > 0 else 0
     points = float(trade.get("pnl", 0) or 0)
+    if slippage_bps:
+        points -= (slippage_bps / 10000.0) * (entry + exit_price)
     gross = points * qty
 
     if qty <= 0:
@@ -228,6 +237,15 @@ def main() -> int:
                     help="Fee schedule to apply: zerodha, angel_one, upstox")
     ap.add_argument("--sweep", action="store_true",
                     help="Grid the target/stop parameters instead of a single run")
+    ap.add_argument("--slippage-bps", type=float, default=0.0,
+                    help="Basis points of slippage charged per leg (entry and exit)")
+    ap.add_argument("--target", type=float, default=None,
+                    help="Override target percent (default: from settings.json)")
+    ap.add_argument("--sl", type=float, default=None,
+                    help="Override stop-loss percent used on large-candle days")
+    ap.add_argument("--direction", default="fade", choices=["fade", "momentum", "both"],
+                    help="fade = trade against the gap (original rules); "
+                         "momentum = trade with it; both = compare them")
     ap.add_argument("--cache-dir", default=None,
                     help="Reuse downloaded candles from this directory across runs")
     ap.add_argument("--feed", default="auto", choices=["auto", "dhan", "yfinance"],
@@ -277,7 +295,8 @@ def main() -> int:
 
     costs = TransactionCostCalculator(args.broker)
 
-    def evaluate(target_pct: float, sl_pct: float, verbose: bool):
+    def evaluate(target_pct: float, sl_pct: float, verbose: bool,
+                 direction: str = "fade"):
         """Replay every target session with one parameter set."""
         cfg = json.loads(json.dumps(config))  # deep copy; engine reads nested params
         params = cfg.setdefault("strategies", {}).setdefault("three_minute", {}).setdefault(
@@ -285,6 +304,7 @@ def main() -> int:
         )
         params["target_percent"] = target_pct
         params["stop_loss_percent"] = sl_pct
+        params["direction_mode"] = direction
         engine = BacktestEngine(cfg)
 
         trades: List[Dict] = []
@@ -305,7 +325,8 @@ def main() -> int:
 
             result = engine.run(date_str, nifty_slice, stock_slices, stocks)
             raw = [t.to_dict() if hasattr(t, "to_dict") else t for t in (result.trades or [])]
-            day_trades = [size_and_cost(t, args.capital, args.alloc_pct, costs) for t in raw]
+            day_trades = [size_and_cost(t, args.capital, args.alloc_pct, costs,
+                                        args.slippage_bps) for t in raw]
 
             if verbose:
                 print_day(result, date_str, day_trades)
@@ -315,9 +336,54 @@ def main() -> int:
 
         return trades, per_day, n_sessions
 
+    def stats(trades: List[Dict]) -> Dict:
+        """Headline numbers for one set of trades."""
+        if not trades:
+            return {"n": 0}
+        wins = [t for t in trades if t["net_rupees"] > 0]
+        loss = abs(sum(t["net_rupees"] for t in trades if t["net_rupees"] <= 0))
+        return {
+            "n": len(trades),
+            "win_pct": len(wins) / len(trades) * 100,
+            "gross": sum(t["gross_rupees"] for t in trades),
+            "fees": sum(t["fees"] for t in trades),
+            "net": sum(t["net_rupees"] for t in trades),
+            "pf": (sum(t["net_rupees"] for t in wins) / loss) if loss else float("inf"),
+        }
+
+    base_params = config.get("strategies", {}).get("three_minute", {}).get("params", {})
+    base_target = args.target if args.target is not None else float(
+        base_params.get("target_percent", 1.0))
+    base_sl = args.sl if args.sl is not None else float(
+        base_params.get("stop_loss_percent", 1.0))
+
+    if args.direction == "both":
+        print(f"\n{'=' * 78}")
+        print(f"  FADE vs MOMENTUM over {len(targets)} sessions"
+              f"   (target {base_target}%, SL {base_sl}%)")
+        print(f"{'=' * 78}")
+        print(f"  {'mode':<10} {'trades':>7} {'win%':>7} {'gross':>12} "
+              f"{'costs':>11} {'NET':>12} {'PF':>6}")
+        print(f"  {'-' * 74}")
+
+        for mode in ("fade", "momentum"):
+            tr, _, _ = evaluate(base_target, base_sl, verbose=False, direction=mode)
+            st = stats(tr)
+            if not st["n"]:
+                print(f"  {mode:<10} no trades")
+                continue
+            print(f"  {mode:<10} {st['n']:>7} {st['win_pct']:>6.1f}% "
+                  f"{st['gross']:>12,.2f} {st['fees']:>11,.2f} "
+                  f"{st['net']:>12,.2f} {st['pf']:>6.2f}")
+
+        print()
+        print("  Same stocks and same entry confirmation in both rows; only the side")
+        print("  traded differs, which also flips the breakout side required to enter.")
+        return 0
+
     if args.sweep:
         print(f"\n{'=' * 78}")
-        print(f"  PARAMETER SWEEP over {len(targets)} sessions"
+        print(f"  PARAMETER SWEEP ({args.direction}) over {len(targets)} sessions"
               f"   (capital Rs{args.capital:,.0f}, {args.alloc_pct:.0f}%/trade)")
         print(f"{'=' * 78}")
         print(f"  {'target%':>8} {'sl%':>6} {'trades':>7} {'win%':>7} "
@@ -326,7 +392,7 @@ def main() -> int:
 
         for tgt in (0.5, 0.75, 1.0, 1.5, 2.0, 3.0):
             for sl in (0.5, 1.0, 1.5):
-                tr, _, _ = evaluate(tgt, sl, verbose=False)
+                tr, _, _ = evaluate(tgt, sl, verbose=False, direction=args.direction)
                 if not tr:
                     continue
                 net = sum(t["net_rupees"] for t in tr)
@@ -344,11 +410,7 @@ def main() -> int:
         return 0
 
     all_trades, daily_net, sessions = evaluate(
-        float(config.get("strategies", {}).get("three_minute", {})
-              .get("params", {}).get("target_percent", 1.0)),
-        float(config.get("strategies", {}).get("three_minute", {})
-              .get("params", {}).get("stop_loss_percent", 1.0)),
-        verbose=True,
+        base_target, base_sl, verbose=True, direction=args.direction
     )
 
     net_total = sum(t["net_rupees"] for t in all_trades)
@@ -359,8 +421,8 @@ def main() -> int:
     n = len(all_trades)
 
     print(f"\n{'=' * 78}")
-    print(f"  AGGREGATE   capital Rs{args.capital:,.0f} | {args.alloc_pct:.0f}% per trade"
-          f" | {costs.fees['name']} fees")
+    print(f"  AGGREGATE ({args.direction})   capital Rs{args.capital:,.0f} | "
+          f"{args.alloc_pct:.0f}% per trade | {costs.fees['name']} fees")
     print(f"{'=' * 78}")
     print(f"  Sessions tested : {sessions}")
     print(f"  Trades          : {n}")

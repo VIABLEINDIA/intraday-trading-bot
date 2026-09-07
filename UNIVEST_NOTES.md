@@ -171,6 +171,67 @@ the exact candle close with zero slippage and no impact cost, and there is no
 survivorship correction for the Nifty 50 constituent list, which is today's
 membership applied to the past year. Both biases push the true result *lower*.
 
+## Momentum instead of fade: better, still not tradeable
+
+The original rules fade the gap. Flipping to momentum — trading *with* the gap —
+is a one-line change (`direction_mode` in the engine, `--direction` on the
+runner). Same stocks, same entry confirmation; only the side traded differs,
+which also flips which side of the reference candle must break.
+
+Over the identical 248 sessions:
+
+| mode | trades | win% | gross | costs | net | PF |
+|---|---|---|---|---|---|---|
+| fade | 279 | 44.1% | −₹1,077 | ₹7,142 | −₹8,219 | 0.72 |
+| **momentum** | 268 | **51.9%** | **+₹4,546** | ₹6,839 | −₹2,292 | 0.91 |
+
+**Gross P&L flips sign.** Momentum's gross is positive in *all 18* parameter
+cells (+₹4,546 to +₹9,108), where fade was negative in 10 of 18. The premise was
+backwards: these gaps continue more often than they revert.
+
+That changes the diagnosis. Fade had nothing under the costs; momentum has a
+real but very small edge — roughly **0.10% gross per trade** — sitting just
+under the ~0.08–0.10% it costs to round-trip.
+
+### Size helps, because brokerage caps
+
+Zerodha charges `min(₹20, 0.03%)` per leg, so above ~₹66,667 of notional the
+percentage cost falls. Momentum at 1.5% target / 1.0% SL:
+
+| alloc | notional | cost % of turnover | net |
+|---|---|---|---|
+| 25% | ₹25,000 | 0.0510% | −₹587 |
+| 100% | ₹100,000 | 0.0415% | +₹3,899 |
+| 200% | ₹200,000 | 0.0298% | +₹20,905 |
+| 400% | ₹400,000 | 0.0239% | +₹54,479 |
+
+At 4x MIS leverage this reads as +54% a year. **Do not believe it.**
+
+### Slippage kills it
+
+Every number above assumes fills at the exact candle close with zero slippage.
+Charging basis points per leg, at 400% alloc:
+
+| slippage/leg | net | on capital |
+|---|---|---|
+| 0 bp | +₹54,479 | +54.5% |
+| 1 bp | +₹33,115 | +33.1% |
+| 2 bp | +₹11,751 | +11.8% |
+| **2.6 bp** | **~0** | **break-even** |
+| 3 bp | −₹9,613 | −9.6% |
+| 5 bp | −₹52,340 | −52.3% |
+| 10 bp | −₹159,160 | −159.2% |
+
+**Break-even is ~2.6 basis points of slippage per leg** — 0.026%. Liquid NSE
+large caps typically cost more than that to cross once spread and impact are
+paid, and this strategy enters on a breakout bar, which is the worst moment for
+spread. Unleveraged at a realistic 3 bp the year is −12.0%.
+
+So the leverage was never creating an edge, only magnifying a margin thinner
+than the friction of trading. The correct conclusion is that momentum is the
+right *direction* but a 3-minute opening-range breakout on Nifty 50 names does
+not clear costs.
+
 ## What to do next
 
 Do not build execution or alerting on top of this strategy — that is machinery
